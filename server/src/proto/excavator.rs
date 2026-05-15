@@ -1,4 +1,4 @@
-use crate::proto::{ExcavatorHeartbeat, ExcavatorRequest, query_server::Query};
+use crate::proto::{ExcavatorHeartbeat, ExcavatorRequest, excavator_server::Excavator};
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -8,14 +8,13 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::{Mutex, RwLock, mpsc};
-use tokio_stream::StreamExt;
-use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, Streaming, codegen::tokio_stream::Stream};
 
 type AgentsMapInner = Arc<RwLock<HashMap<AgentId, mpsc::Sender<Result<ExcavatorRequest, Status>>>>>;
 
 #[derive(Eq, PartialEq, Hash)]
-struct AgentInner {
+pub struct AgentInner {
     name: String,
     addr: SocketAddr,
 }
@@ -76,7 +75,7 @@ impl ExcavatorService {
 }
 
 #[tonic::async_trait]
-impl Query for ExcavatorService {
+impl Excavator for ExcavatorService {
     type RunExcavatorStream = Pin<Box<dyn Stream<Item = Result<ExcavatorRequest, Status>> + Send + 'static>>;
 
     async fn run_excavator(&self, request: Request<Streaming<ExcavatorHeartbeat>>) -> Result<Response<Self::RunExcavatorStream>, Status> {

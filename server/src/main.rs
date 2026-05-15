@@ -1,7 +1,9 @@
 use crate::{
     config::Config,
     proto::{
+        client::{QueryService, LOGS_MANAGER},
         excavator::{AgentsMap, ExcavatorService},
+        excavator_server::ExcavatorServer,
         query_server::QueryServer,
     },
 };
@@ -26,15 +28,14 @@ async fn main() {
         .parse()
         .expect("could not parse address");
 
-    println!("server listening on {}", addr);
-
     let client_map = AgentsMap::default();
 
-    tokio::spawn(async move {
-        Server::builder()
-            .add_service(QueryServer::new(ExcavatorService::new(client_map)))
-            .serve(addr)
-            .await
-            .expect("failed to serve")
-    });
+    LOGS_MANAGER.send_log(format!("server listening on {}", addr)).await;
+
+    Server::builder()
+        .add_service(ExcavatorServer::new(ExcavatorService::new(client_map)))
+        .add_service(QueryServer::new(QueryService::new(LOGS_MANAGER.subscribe())))
+        .serve(addr)
+        .await
+        .expect("failed to serve")
 }

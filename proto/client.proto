@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package client;
+
+service Query {
+  rpc Query (QueryRequest) returns (QueryResponse);
+  rpc Logs (LogsQueryRequest) returns (stream LogsQueryResponse);
+}
+
+message LogsQueryRequest {}
+
+message LogsQueryResponse {
+  repeated string log = 1;
+}
+
+message QueryRequest {
+  string command = 1;
+}
+
+message TableRow {
+  string key = 1;
+  bytes data = 2;
+}
+
+message QueryResponse {
+  repeated TableRow rows = 1;
+}

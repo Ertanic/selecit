@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package main;
 
-service Query {
+service Excavator {
   rpc RunExcavator (stream ExcavatorHeartbeat) returns (stream ExcavatorRequest);
 }
 

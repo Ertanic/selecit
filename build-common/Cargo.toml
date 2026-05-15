@@ -1,0 +1,8 @@
+[package]
+name = "build-common"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tonic-prost-build = "0.14"
+glob = "0.3"
