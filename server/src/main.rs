@@ -1,6 +1,9 @@
 use crate::{
     config::Config,
-    proto::{excavator::ExcavatorService, query_server::QueryServer},
+    proto::{
+        excavator::{ClientMap, ExcavatorService},
+        query_server::QueryServer,
+    },
 };
 use tonic::transport::Server;
 
@@ -25,9 +28,13 @@ async fn main() {
 
     println!("server listening on {}", addr);
 
-    Server::builder()
-        .add_service(QueryServer::new(ExcavatorService::default()))
-        .serve(addr)
-        .await
-        .expect("failed to serve")
+    let client_map = ClientMap::default();
+
+    tokio::spawn(async move {
+        Server::builder()
+            .add_service(QueryServer::new(ExcavatorService::new(client_map)))
+            .serve(addr)
+            .await
+            .expect("failed to serve")
+    });
 }

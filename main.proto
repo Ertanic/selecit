@@ -3,15 +3,12 @@ syntax = "proto3";
 package main;
 
 service Query {
-  rpc RunExcavator (stream ExcavatorRequest) returns (stream ExcavatorResponse);
-  rpc Handshake (HandshakeRequest) returns (HandshakeResponse);
+  rpc RunExcavator (stream ExcavatorHeartbeat) returns (stream ExcavatorRequest);
 }
 
-message HandshakeRequest {}
+message ExcavatorHeartbeat {}
 
-message HandshakeResponse {}
-
-message ExcavatorRequest {
+message ExcavatorCommand {
   string name = 1;
   repeated string args = 2;
 }
@@ -19,4 +16,11 @@ message ExcavatorRequest {
 message ExcavatorResponse {
   int64 code = 1;
   string output = 2;
+}
+
+message ExcavatorRequest {
+  oneof request {
+    ExcavatorCommand command = 1;
+    ExcavatorResponse response = 2;
+  }
 }
