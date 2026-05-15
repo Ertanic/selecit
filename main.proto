@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package main;
+
+service Query {
+  rpc RunExcavator (stream ExcavatorRequest) returns (stream ExcavatorResponse);
+  rpc Handshake (HandshakeRequest) returns (HandshakeResponse);
+}
+
+message HandshakeRequest {}
+
+message HandshakeResponse {}
+
+message ExcavatorRequest {
+  string name = 1;
+  repeated string args = 2;
+}
+
+message ExcavatorResponse {
+  int64 code = 1;
+  string output = 2;
+}

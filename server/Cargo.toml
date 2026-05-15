@@ -4,3 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+knus = "3.3"
+tokio = { version = "1.41", features = ["full"] }
+prost = "0.14"
+tonic = { version = "0.14", features = ["tls-ring"] }
+
+[build-dependencies]
+copy_to_output = "2.2.0"
+tonic-prost-build = "0.14"
