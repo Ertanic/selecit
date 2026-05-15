@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
     proto::{
-        excavator::{ClientMap, ExcavatorService},
+        excavator::{AgentsMap, ExcavatorService},
         query_server::QueryServer,
     },
 };
@@ -28,7 +28,7 @@ async fn main() {
 
     println!("server listening on {}", addr);
 
-    let client_map = ClientMap::default();
+    let client_map = AgentsMap::default();
 
     tokio::spawn(async move {
         Server::builder()

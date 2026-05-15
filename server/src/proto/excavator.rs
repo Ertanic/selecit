@@ -12,65 +12,65 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming, codegen::tokio_stream::Stream};
 
-type ClientMapInner = Arc<RwLock<HashMap<ClientId, mpsc::Sender<Result<ExcavatorRequest, Status>>>>>;
+type AgentsMapInner = Arc<RwLock<HashMap<AgentId, mpsc::Sender<Result<ExcavatorRequest, Status>>>>>;
 
 #[derive(Eq, PartialEq, Hash)]
-struct ClientIdInner {
+struct AgentInner {
     name: String,
     addr: SocketAddr,
 }
 
 #[derive(Clone)]
-pub struct ClientId(Arc<Mutex<ClientIdInner>>);
+pub struct AgentId(Arc<Mutex<AgentInner>>);
 
-impl Hash for ClientId {
+impl Hash for AgentId {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.blocking_lock().hash(state);
     }
 }
 
-impl Eq for ClientId {}
+impl Eq for AgentId {}
 
-impl PartialEq for ClientId {
+impl PartialEq for AgentId {
     fn eq(&self, other: &Self) -> bool {
         *self.0.blocking_lock() == *other.0.blocking_lock()
     }
 }
 
-impl Deref for ClientId {
-    type Target = Arc<Mutex<ClientIdInner>>;
+impl Deref for AgentId {
+    type Target = Arc<Mutex<AgentInner>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl ClientId {
+impl AgentId {
     pub fn generate(addr: SocketAddr) -> Self {
         let bytes: &[u8] = unsafe { std::slice::from_raw_parts(&addr as *const _ as *const u8, std::mem::size_of::<SocketAddr>()) };
         let hex = hex::encode(&bytes[..bytes.len() / 2]);
         let name = format!("client{}", hex);
 
-        let inner = ClientIdInner { name, addr };
+        let inner = AgentInner { name, addr };
         Self(Arc::new(Mutex::new(inner)))
     }
 }
 
 #[derive(Default, Clone)]
-pub struct ClientMap(ClientMapInner);
+pub struct AgentsMap(AgentsMapInner);
 
-impl Deref for ClientMap {
-    type Target = ClientMapInner;
+impl Deref for AgentsMap {
+    type Target = AgentsMapInner;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-pub struct ExcavatorService(ClientMap);
+pub struct ExcavatorService(AgentsMap);
 
 impl ExcavatorService {
-    pub fn new(map: ClientMap) -> Self {
+    pub fn new(map: AgentsMap) -> Self {
         Self(map)
     }
 }
@@ -81,7 +81,7 @@ impl Query for ExcavatorService {
 
     async fn run_excavator(&self, request: Request<Streaming<ExcavatorHeartbeat>>) -> Result<Response<Self::RunExcavatorStream>, Status> {
         let addr = request.remote_addr().ok_or(Status::aborted("remote address not found"))?;
-        let id = ClientId::generate(addr);
+        let id = AgentId::generate(addr);
 
         let (tx, rx) = tokio::sync::mpsc::channel(128);
 
