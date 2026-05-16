@@ -12,6 +12,7 @@ use tonic::transport::Server;
 mod config;
 mod path;
 mod proto;
+mod query;
 
 #[tokio::main]
 async fn main() {

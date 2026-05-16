@@ -12,6 +12,8 @@ tonic-prost = "0.14"
 hex = "0.4"
 tokio-stream = "0.1"
 lazy_static = "1.5"
+futures = "0.3"
+small_uid = "0.2.4"
 
 [build-dependencies]
 build-common = { path = "../build-common" }

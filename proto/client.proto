@@ -17,9 +17,18 @@ message QueryRequest {
   string command = 1;
 }
 
-message TableRow {
+message TableCol {
   string key = 1;
-  bytes data = 2;
+  oneof data {
+    string str = 2;
+    int64 integer = 3;
+    double floating = 4;
+    bool boolean = 5;
+  }
+}
+
+message TableRow {
+  repeated TableCol cols = 1;
 }
 
 message QueryResponse {

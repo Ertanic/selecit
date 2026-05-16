@@ -1,14 +1,19 @@
-use crate::proto::{LogsQueryRequest, query_client::QueryClient};
+use crate::proto::{LogsQueryRequest, QueryRequest, TableRow, query_client::QueryClient, table_col, table_col::Data};
 use ratatui::{
     DefaultTerminal, Frame,
-    crossterm::{event, event::KeyCode},
+    crossterm::{
+        event,
+        event::{Event, KeyCode, KeyModifiers, ModifierKeyCode},
+    },
     layout::{Constraint, Layout, Rect},
+    style::Modifier,
     text::Line,
-    widgets::{Block, List, Row, Table, Tabs},
+    widgets::{Block, List, Paragraph, Row, Table, Tabs},
 };
 use std::{io, sync::Arc};
 use tokio::{runtime::Handle, sync::RwLock, task::block_in_place};
 use tonic::{codegen::tokio_stream::StreamExt, transport::Channel};
+use tui_input::{Input, backend::crossterm::EventHandler};
 
 #[derive(Default, Clone, Copy)]
 enum Tab {
@@ -33,7 +38,7 @@ impl Tab {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, PartialEq)]
 enum AppMode {
     #[default]
     Input,
@@ -46,9 +51,12 @@ pub struct App {
     app_mode: AppMode,
     addr: String,
 
+    input: Input,
+
     client: Option<QueryClient<Channel>>,
     _logs_cache: Arc<RwLock<Vec<String>>>,
     _logs_listener: Option<tokio::task::JoinHandle<()>>,
+    _query_cache: Option<Vec<TableRow>>,
 }
 
 impl App {
@@ -89,14 +97,53 @@ impl App {
         loop {
             terminal.draw(|frame| self.render(frame))?;
 
-            if let Some(key) = event::read()?.as_key_press_event() {
+            let event = event::read()?;
+            if let Event::Key(key) = event {
                 match key.code {
-                    KeyCode::Right if let Some(tab) = self.current_tab.next() => self.current_tab = tab,
-                    KeyCode::Left if let Some(tab) = self.current_tab.back() => self.current_tab = tab,
+                    KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
+                    KeyCode::Enter if self.app_mode == AppMode::Input => {
+                        if let Some(ref mut client) = self.client {
+                            let command = self.input.value_and_reset();
+                            let result = block_in_place(|| Handle::current().block_on(async move { client.query(QueryRequest { command }).await }));
+                            match result {
+                                Ok(response) => {
+                                    let rows = response.into_inner().rows;
+                                    self._query_cache = Some(rows);
+                                }
+                                Err(err) => block_in_place(|| {
+                                    Handle::current().block_on(async {
+                                        self._logs_cache
+                                            .write()
+                                            .await
+                                            .push(format!("an error occurred while trying to execute the command: {err}"))
+                                    });
+                                }),
+                            }
+                        }
+                    }
+                    KeyCode::Right if let Some(tab) = self.current_tab.next() => {
+                        self.stop_editing();
+                        self.current_tab = tab;
+                    }
+                    KeyCode::Left if let Some(tab) = self.current_tab.back() => {
+                        self.start_editing();
+                        self.current_tab = tab;
+                    }
+                    _ if self.app_mode == AppMode::Input => {
+                        self.input.handle_event(&event);
+                    }
                     _ => {}
                 }
             }
         }
+    }
+
+    fn start_editing(&mut self) {
+        self.app_mode = AppMode::Input;
+    }
+
+    fn stop_editing(&mut self) {
+        self.app_mode = AppMode::Normal;
     }
 
     fn render(&mut self, frame: &mut Frame) {
@@ -116,8 +163,53 @@ impl App {
     }
 
     fn render_query(&self, frame: &mut Frame, content_area: Rect) {
-        let table = Table::new([Row::new(["Query"])], [Constraint::Fill(1)]);
-        frame.render_widget(table, content_area);
+        let [table_area, input_area] = Layout::vertical([Constraint::Fill(8), Constraint::Fill(2)]).areas(content_area);
+
+        let (rows, widths) = if let Some(rows) = self._query_cache.as_ref() {
+            if let Some(first) = rows.first() {
+                let widths = first.cols.iter().map(|_| Constraint::Percentage(30)).collect();
+
+                let cols = first.cols.iter().map(|c| c.key.clone()).collect::<Vec<_>>();
+                let body = rows
+                    .into_iter()
+                    .map(|r| {
+                        Row::new(
+                            r.cols
+                                .iter()
+                                .map(|c| {
+                                    if let Some(ref data) = c.data {
+                                        match data {
+                                            Data::Str(str) => str.clone(),
+                                            Data::Integer(int) => int.to_string(),
+                                            Data::Floating(float) => float.to_string(),
+                                            Data::Boolean(b) => b.to_string(),
+                                        }
+                                    }
+                                    else {
+                                        "".to_string()
+                                    }
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let rows = vec![Row::new(cols)].into_iter().chain(body).collect();
+
+                (rows, widths)
+            }
+            else {
+                (vec![], vec![])
+            }
+        }
+        else {
+            (vec![], vec![])
+        };
+
+        let table = Table::new(rows, widths).block(Block::bordered());
+        frame.render_widget(table, table_area);
+
+        let input = Paragraph::new(self.input.value()).block(Block::bordered().title("Command"));
+        frame.render_widget(input, input_area);
     }
 
     fn render_logs(&self, frame: &mut Frame, content_area: Rect) {

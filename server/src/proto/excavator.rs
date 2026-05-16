@@ -1,4 +1,5 @@
-use crate::proto::{ExcavatorHeartbeat, ExcavatorRequest, excavator_server::Excavator};
+use crate::proto::{ExcavatorHeartbeat, ExcavatorMessage, ExcavatorResponse, client::LOGS_MANAGER, excavator_message, excavator_server::Excavator};
+use futures::stream::StreamExt;
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -7,11 +8,11 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use tokio::sync::{Mutex, RwLock, mpsc};
-use tokio_stream::{StreamExt, wrappers::ReceiverStream};
+use tokio::sync::{Mutex, RwLock, broadcast, broadcast::error::SendError, mpsc};
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming, codegen::tokio_stream::Stream};
 
-type AgentsMapInner = Arc<RwLock<HashMap<AgentId, mpsc::Sender<Result<ExcavatorRequest, Status>>>>>;
+type AgentsMapInner = Arc<RwLock<HashMap<AgentId, AgentCommandManager>>>;
 
 #[derive(Eq, PartialEq, Hash)]
 pub struct AgentInner {
@@ -55,6 +56,11 @@ impl AgentId {
     }
 }
 
+pub struct AgentCommandManager {
+    command_tx: mpsc::Sender<Result<ExcavatorMessage, Status>>,
+    response_rx: broadcast::Receiver<ExcavatorResponse>,
+}
+
 #[derive(Default, Clone)]
 pub struct AgentsMap(AgentsMapInner);
 
@@ -76,35 +82,101 @@ impl ExcavatorService {
 
 #[tonic::async_trait]
 impl Excavator for ExcavatorService {
-    type RunExcavatorStream = Pin<Box<dyn Stream<Item = Result<ExcavatorRequest, Status>> + Send + 'static>>;
+    type RunExcavatorStream = Pin<Box<dyn Stream<Item = Result<ExcavatorMessage, Status>> + Send + 'static>>;
 
-    async fn run_excavator(&self, request: Request<Streaming<ExcavatorHeartbeat>>) -> Result<Response<Self::RunExcavatorStream>, Status> {
+    async fn run_excavator(&self, request: Request<Streaming<ExcavatorMessage>>) -> Result<Response<Self::RunExcavatorStream>, Status> {
         let addr = request.remote_addr().ok_or(Status::aborted("remote address not found"))?;
-        let id = AgentId::generate(addr);
-
-        let (tx, rx) = tokio::sync::mpsc::channel(128);
-
-        self.0.write().await.insert(id.clone(), tx);
-
         let mut stream = request.into_inner();
-        tokio::spawn(async move {
-            while let Some(request) = stream.next().await {
-                match request {
-                    Ok(_) => {
-                        println!(
-                            "Received a command from the excavator ({}), but that shouldn't be the case. What does it think it's doing!?",
-                            id.lock().await.name
-                        );
+
+        match stream.next().await {
+            Some(msg) => match msg {
+                Ok(msg) => {
+                    if let Some(heartbeat) = msg.request {
+                        match heartbeat {
+                            excavator_message::Request::Heartbeat(_) => {
+                                let id = AgentId::generate(addr);
+
+                                let (command_tx, command_rx) = mpsc::channel(128);
+                                let (response_tx, response_rx) = broadcast::channel(128);
+                                let manager = AgentCommandManager { command_tx, response_rx };
+
+                                self.0.write().await.insert(id.clone(), manager);
+
+                                tokio::spawn({
+                                    let id = id.clone();
+                                    async move {
+                                        while let Some(msg) = stream.next().await {
+                                            match msg {
+                                                Ok(ExcavatorMessage { request: Some(request) }) => match request {
+                                                    excavator_message::Request::Heartbeat(_) => {
+                                                        LOGS_MANAGER.send_log(format!("agent ({}) sent heartbeat", id.lock().await.name)).await;
+                                                    }
+                                                    excavator_message::Request::Response(response) => {
+                                                        if let Err(err) = response_tx.send(response) {
+                                                            LOGS_MANAGER.send_log(format!("occurred error: {err}")).await;
+                                                        }
+                                                    }
+                                                    excavator_message::Request::Command(_) => {
+                                                        LOGS_MANAGER.send_log(format!("agent ({}) sent command", id.lock().await.name)).await;
+                                                    }
+                                                },
+                                                Err(err) => {
+                                                    LOGS_MANAGER.send_log(format!("occurred error: {err}")).await;
+                                                }
+                                                _ => {
+                                                    LOGS_MANAGER
+                                                        .send_log(format!("received empty message from {}", id.lock().await.name))
+                                                        .await;
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+
+                                LOGS_MANAGER
+                                    .send_log(format!("agent ({}) connected successfully", id.lock().await.name))
+                                    .await;
+
+                                let stream = ReceiverStream::new(command_rx);
+                                Ok(Response::new(Box::pin(stream) as Self::RunExcavatorStream))
+                            }
+                            _ => {
+                                LOGS_MANAGER
+                                    .send_log(format!(
+                                        "the agent ({addr}) tried to connect, but the first message should be a heartbeat"
+                                    ))
+                                    .await;
+
+                                Err(Status::failed_precondition("no heartbeat"))
+                            }
+                        }
                     }
-                    Err(err) => {
-                        println!("Received an error from the excavator: {}", err);
-                        break;
+                    else {
+                        LOGS_MANAGER
+                            .send_log(format!("the agent {addr} tried to connect, but no heartbeat was detected"))
+                            .await;
+                        Err(Status::failed_precondition("empty heartbeat"))
                     }
                 }
-            }
-        });
+                Err(err) => {
+                    LOGS_MANAGER
+                        .send_log(format!(
+                            "agent {addr} tried to connect, but the connection could not be established due to: {err}"
+                        ))
+                        .await;
 
-        let stream = ReceiverStream::new(rx);
-        Ok(Response::new(Box::pin(stream) as Self::RunExcavatorStream))
+                    Err(Status::unknown("failed to connect"))
+                }
+            },
+            None => {
+                LOGS_MANAGER
+                    .send_log(format!(
+                        "the agent ({addr}) tried to connect, but it failed because no message was received"
+                    ))
+                    .await;
+
+                Err(Status::unknown("failed to connect"))
+            }
+        }
     }
 }
