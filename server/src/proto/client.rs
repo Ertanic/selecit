@@ -1,5 +1,13 @@
-use crate::proto::{LogsQueryRequest, LogsQueryResponse, QueryRequest, QueryResponse, query_server::Query};
+use crate::{
+    proto::{
+        LogsQueryRequest, LogsQueryResponse, QueryRequest, QueryResponse, TableCol, TableRow, excavator::AgentsMap, query_server::Query,
+        table_col::Data,
+    },
+    query::{QueryExpr, QueryParseError, parse_query},
+};
+use futures::{StreamExt, stream};
 use lazy_static::lazy_static;
+use small_uid::SmallUid;
 use std::{ops::Deref, pin::Pin};
 use tokio::sync::{Mutex, broadcast, broadcast::error::SendError};
 use tokio_stream::{Stream, wrappers::ReceiverStream};
@@ -39,18 +47,50 @@ impl Deref for LogsReceiver {
     }
 }
 
-pub struct QueryService(LogsReceiver);
+pub struct QueryService(LogsReceiver, AgentsMap);
 
 impl QueryService {
-    pub fn new(logs: LogsReceiver) -> Self {
-        Self(logs)
+    pub fn new(logs: LogsReceiver, agents: AgentsMap) -> Self {
+        Self(logs, agents)
     }
 }
 
 #[tonic::async_trait]
 impl Query for QueryService {
     async fn query(&self, request: Request<QueryRequest>) -> Result<Response<QueryResponse>, Status> {
-        todo!()
+        let query = request.into_inner().command;
+
+        if query.is_empty() {
+            return Err(Status::invalid_argument("empty query"));
+        }
+
+        LOGS_MANAGER.send_log(format!("got query: '{query}'")).await;
+
+        let query = parse_query(query.trim())
+            .await
+            .map_err(|_| Status::invalid_argument("failed to parse query"))?;
+
+        let uid = SmallUid::new().to_string();
+
+        match query {
+            QueryExpr::ListBy(field) => {
+                let map = self.1.read().await;
+                let agents = stream::iter(map.keys())
+                    .filter_map(|k| async move { Some(k.lock().await.name.clone()) })
+                    .map(|k| TableCol {
+                        key: "name".to_owned(),
+                        data: Some(Data::Str(k)),
+                    })
+                    .collect::<Vec<_>>()
+                    .await;
+                let rows = vec![TableRow { cols: agents }];
+                let response = Response::new(QueryResponse { rows });
+                Ok(response)
+            }
+            QueryExpr::SelectFrom { .. } => {
+                todo!()
+            }
+        }
     }
 
     type LogsStream = Pin<Box<dyn Stream<Item = Result<LogsQueryResponse, Status>> + Send>>;

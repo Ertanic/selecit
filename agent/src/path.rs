@@ -9,5 +9,5 @@ pub fn use_app_path() -> PathBuf {
 }
 
 pub fn use_config_path() -> PathBuf {
-    use_app_path().join("config.kdl")
+    use_app_path().join("agent.kdl")
 }

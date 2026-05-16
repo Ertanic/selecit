@@ -8,7 +8,11 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use tokio::sync::{Mutex, RwLock, broadcast, broadcast::error::SendError, mpsc};
+use tokio::{
+    runtime::Handle,
+    sync::{Mutex, RwLock, broadcast, broadcast::error::SendError, mpsc},
+    task::block_in_place,
+};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming, codegen::tokio_stream::Stream};
 
@@ -16,8 +20,8 @@ type AgentsMapInner = Arc<RwLock<HashMap<AgentId, AgentCommandManager>>>;
 
 #[derive(Eq, PartialEq, Hash)]
 pub struct AgentInner {
-    name: String,
-    addr: SocketAddr,
+    pub name: String,
+    pub addr: SocketAddr,
 }
 
 #[derive(Clone)]
@@ -25,7 +29,11 @@ pub struct AgentId(Arc<Mutex<AgentInner>>);
 
 impl Hash for AgentId {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.blocking_lock().hash(state);
+        block_in_place(|| {
+            Handle::current().block_on(async {
+                self.0.lock().await.hash(state);
+            })
+        })
     }
 }
 

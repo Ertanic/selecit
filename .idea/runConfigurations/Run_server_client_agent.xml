@@ -1,0 +1,8 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Run server+client+agent" type="CompoundRunConfigurationType">
+    <toRun name="Run agent" targetId="RsBuildProfile:dev" type="CargoCommandRunConfiguration" />
+    <toRun name="Run client" targetId="RsBuildProfile:dev" type="CargoCommandRunConfiguration" />
+    <toRun name="Run server" targetId="RsBuildProfile:dev" type="CargoCommandRunConfiguration" />
+    <method v="2" />
+  </configuration>
+</component>

@@ -101,7 +101,7 @@ impl App {
             if let Event::Key(key) = event {
                 match key.code {
                     KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
-                    KeyCode::Enter if self.app_mode == AppMode::Input => {
+                    KeyCode::Enter if self.app_mode == AppMode::Input && !self.input.value().is_empty() => {
                         if let Some(ref mut client) = self.client {
                             let command = self.input.value_and_reset();
                             let result = block_in_place(|| Handle::current().block_on(async move { client.query(QueryRequest { command }).await }));

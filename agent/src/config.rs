@@ -39,5 +39,5 @@ pub struct Config {
     #[knus(child)]
     pub server: Server,
     #[knus(child)]
-    pub auth: Auth,
+    pub auth: Option<Auth>,
 }

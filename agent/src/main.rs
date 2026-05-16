@@ -27,6 +27,7 @@ async fn main() {
     let config: Config = knus::parse("config", &config_content).expect("failed to parse config");
 
     let addr = format!("http://{}:{}", config.server.address, config.server.port.unwrap_or(1299));
+    println!("listening server at {}", addr);
     let mut client = ExcavatorClient::connect(addr).await.expect("failed to connect to excavator");
 
     let (tx, rx) = tokio::sync::mpsc::channel(128);

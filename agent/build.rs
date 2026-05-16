@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-const CONFIG_FILE: &str = "config.kdl";
+const CONFIG_FILE: &str = "agent.kdl";
 
 fn main() {
     let proto_folder = build_common::get_proto_folder();
