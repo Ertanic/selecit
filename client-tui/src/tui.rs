@@ -1,12 +1,11 @@
-use crate::proto::{LogsQueryRequest, QueryRequest, TableRow, query_client::QueryClient, table_col, table_col::Data};
+use crate::proto::{LogsQueryRequest, QueryRequest, TableRow, query_client::QueryClient};
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::{
         event,
-        event::{Event, KeyCode, KeyModifiers, ModifierKeyCode},
+        event::{Event, KeyCode, KeyModifiers},
     },
     layout::{Constraint, Layout, Rect},
-    style::Modifier,
     text::Line,
     widgets::{Block, List, Paragraph, Row, Table, Tabs},
 };
@@ -172,26 +171,7 @@ impl App {
                 let cols = first.cols.iter().map(|c| c.key.clone()).collect::<Vec<_>>();
                 let body = rows
                     .into_iter()
-                    .map(|r| {
-                        Row::new(
-                            r.cols
-                                .iter()
-                                .map(|c| {
-                                    if let Some(ref data) = c.data {
-                                        match data {
-                                            Data::Str(str) => str.clone(),
-                                            Data::Integer(int) => int.to_string(),
-                                            Data::Floating(float) => float.to_string(),
-                                            Data::Boolean(b) => b.to_string(),
-                                        }
-                                    }
-                                    else {
-                                        "".to_string()
-                                    }
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                    })
+                    .map(|r| Row::new(r.cols.iter().map(|c| c.data.clone()).collect::<Vec<_>>()))
                     .collect::<Vec<_>>();
                 let rows = vec![Row::new(cols)].into_iter().chain(body).collect();
 

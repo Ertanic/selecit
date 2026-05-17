@@ -14,7 +14,7 @@ impl GetInfoModule {
 #[async_trait::async_trait]
 impl Module for GetInfoModule {
     fn name(&self) -> &'static str {
-        "get-info"
+        "info"
     }
 
     fn description(&self) -> &'static str {
@@ -43,20 +43,19 @@ impl Module for GetInfoModule {
         if let Some(ty) = ty {
             match ty.as_str() {
                 "modules" => {
-                    let modules = self.0.get_all().await;
-                    let json = serde_json::to_string(&modules).unwrap();
-                    ExecuteResult { code: 0, output: json }
+                    let modules = self.0.get_all().await.into_iter().map(|s| s.to_owned()).collect();
+                    ExecuteResult { code: 0, output: modules }
                 }
                 _ => ExecuteResult {
                     code: 1,
-                    output: "unknown type".to_string(),
+                    output: vec!["unknown type".to_string()],
                 },
             }
         }
         else {
             ExecuteResult {
                 code: 1,
-                output: "missing type parameter".to_string(),
+                output: vec!["missing type parameter".to_string()],
             }
         }
     }

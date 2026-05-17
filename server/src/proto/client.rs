@@ -1,14 +1,20 @@
 use crate::{
     proto::{
-        LogsQueryRequest, LogsQueryResponse, QueryRequest, QueryResponse, TableCol, TableRow, excavator::AgentsMap, query_server::Query,
-        table_col::Data,
+        ExcavatorCommand, ExcavatorCommandArg, LogsQueryRequest, LogsQueryResponse, QueryRequest, QueryResponse, TableCol, TableRow,
+        excavator::{AgentId, AgentsMap},
+        query_server::Query,
     },
-    query::{QueryExpr, QueryParseError, parse_query},
+    query::{QueryExpr, parse_query},
 };
 use futures::{StreamExt, stream};
 use lazy_static::lazy_static;
 use small_uid::SmallUid;
-use std::{ops::Deref, pin::Pin};
+use std::{
+    collections::HashMap,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    ops::Deref,
+    pin::Pin,
+};
 use tokio::sync::{Mutex, broadcast, broadcast::error::SendError};
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
@@ -70,16 +76,14 @@ impl Query for QueryService {
             .await
             .map_err(|_| Status::invalid_argument("failed to parse query"))?;
 
-        let uid = SmallUid::new().to_string();
-
         match query {
             QueryExpr::ListBy(field) => {
                 let map = self.1.read().await;
                 let agents = stream::iter(map.keys())
                     .filter_map(|k| async move { Some(k.lock().await.name.clone()) })
-                    .map(|k| TableCol {
+                    .map(|data| TableCol {
                         key: "name".to_owned(),
-                        data: Some(Data::Str(k)),
+                        data,
                     })
                     .collect::<Vec<_>>()
                     .await;
@@ -87,14 +91,110 @@ impl Query for QueryService {
                 let response = Response::new(QueryResponse { rows });
                 Ok(response)
             }
-            QueryExpr::SelectFrom { .. } => {
-                todo!()
+            QueryExpr::SelectFrom { from, select } => {
+                let map = self.1.read().await;
+                let id = AgentId::new(&from, SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)));
+
+                let mut agent = if let Some(agent) = map.get(&id).cloned() {
+                    agent
+                }
+                else {
+                    stream::iter(map.iter())
+                        .filter_map(|(k, m)| Box::pin(async { if k.lock().await.name.starts_with(&from) { Some(m.clone()) } else { None } }))
+                        .next()
+                        .await
+                        .ok_or(Status::not_found("failed to get agent id"))?
+                };
+
+                let mut rows = Vec::new();
+                for crate::query::InvokeFunc { name, args } in select {
+                    let uid = SmallUid::new().to_string();
+                    let args = args.into_iter().map(|a| ExcavatorCommandArg { key: a.name, value: a.value }).collect();
+
+                    LOGS_MANAGER.send_log(format!("executing command: '{name}' with args: '{args:?}'")).await;
+
+                    let result = agent
+                        .send(ExcavatorCommand {
+                            uid,
+                            name: name.clone(),
+                            args,
+                        })
+                        .await;
+
+                    if let Some(response) = result {
+                        LOGS_MANAGER
+                            .send_log(format!("'{name}' command is done with status '{}'", response.code))
+                            .await;
+
+                        let cols = response
+                            .results
+                            .into_iter()
+                            .fold(HashMap::new(), |mut acc: HashMap<String, Vec<String>>, res| {
+                                if let Some(col) = acc.get_mut(&res.key) {
+                                    col.push(res.value);
+                                }
+                                else {
+                                    acc.insert(res.key, vec![res.value]);
+                                }
+                                acc
+                            });
+
+                        if rows.is_empty() {
+                            for (col_name, values) in cols {
+                                for row in values {
+                                    rows.push(TableRow {
+                                        cols: vec![TableCol {
+                                            key: col_name.clone(),
+                                            data: row,
+                                        }],
+                                    });
+                                }
+                            }
+                        }
+                        else {
+                            for (col_name, values) in &cols {
+                                for (i, r) in values.iter().enumerate() {
+                                    let row = rows.get_mut(i);
+                                    if let Some(row) = row {
+                                        row.cols.push(TableCol {
+                                            key: col_name.clone(),
+                                            data: r.clone(),
+                                        });
+                                    }
+                                    else {
+                                        let cols_len = rows.first().map(|r| r.cols.len()).unwrap_or(0);
+                                        let cols = (0..cols_len)
+                                            .filter_map(|i| {
+                                                cols.iter().nth(i).map(|(c, _)| TableCol {
+                                                    key: c.clone(),
+                                                    data: Default::default(),
+                                                })
+                                            })
+                                            .chain(vec![TableCol {
+                                                key: col_name.clone(),
+                                                data: r.clone(),
+                                            }])
+                                            .collect();
+
+                                        rows.push(TableRow { cols });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else {
+                        return Err(Status::cancelled("failed to execute command".to_string()));
+                    }
+                }
+
+                let response = Response::new(QueryResponse { rows });
+                Ok(response)
             }
         }
     }
 
     type LogsStream = Pin<Box<dyn Stream<Item = Result<LogsQueryResponse, Status>> + Send>>;
-    async fn logs(&self, request: Request<LogsQueryRequest>) -> Result<Response<Self::LogsStream>, Status> {
+    async fn logs(&self, _: Request<LogsQueryRequest>) -> Result<Response<Self::LogsStream>, Status> {
         let (tx, rx) = tokio::sync::mpsc::channel(128);
 
         let mut logs_rx = self.0.resubscribe();

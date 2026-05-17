@@ -8,7 +8,7 @@ unsafe impl Send for AgentVersionModule {}
 #[async_trait::async_trait]
 impl Module for AgentVersionModule {
     fn name(&self) -> &'static str {
-        "agent-version"
+        "version"
     }
 
     fn description(&self) -> &'static str {
@@ -22,7 +22,7 @@ impl Module for AgentVersionModule {
     async fn execute(&self, _: Args) -> ExecuteResult {
         ExecuteResult {
             code: 0,
-            output: env!("CARGO_PKG_VERSION").to_string(),
+            output: vec![env!("CARGO_PKG_VERSION").to_string()],
         }
     }
 }

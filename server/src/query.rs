@@ -8,17 +8,22 @@ use nom::{
         complete::{space0, space1},
     },
     combinator::{map, map_opt},
-    multi::{many0, separated_list0, separated_list1},
-    sequence::{pair, preceded},
+    multi::separated_list0,
 };
 
 #[derive(Debug, PartialEq)]
 pub struct QueryParseError;
 
 #[derive(Debug, PartialEq)]
+pub struct InvokeFuncArg {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct InvokeFunc {
     pub name: String,
-    pub args: Vec<String>,
+    pub args: Vec<InvokeFuncArg>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -43,12 +48,26 @@ fn list_by(input: &str) -> IResult<&str, QueryExpr> {
     Ok((input, QueryExpr::ListBy(field_name.to_string())))
 }
 
-fn invoke_args(input: &str) -> IResult<&str, Vec<String>> {
-    separated_list0(
-        invoke_list_separate,
-        map_opt(field, |s| if s.is_empty() { None } else { Some(s.to_string()) }),
-    )
-    .parse(input)
+fn invoke_arg(input: &str) -> IResult<&str, InvokeFuncArg> {
+    let (input, name) = field(input)?;
+
+    let (input, _) = space0(input)?;
+    let (input, _) = char('=').parse(input)?;
+    let (input, _) = space0(input)?;
+
+    let (input, value) = identifier(input)?;
+
+    Ok((
+        input,
+        InvokeFuncArg {
+            name: name.to_string(),
+            value: value.to_string(),
+        },
+    ))
+}
+
+fn invoke_args(input: &str) -> IResult<&str, Vec<InvokeFuncArg>> {
+    separated_list0(invoke_list_separate, invoke_arg).parse(input)
 }
 
 fn invoke_func(input: &str) -> IResult<&str, InvokeFunc> {
@@ -112,8 +131,6 @@ pub async fn parse_query(query: &str) -> Result<QueryExpr, QueryParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nom::{Err::Incomplete, Needed::Size};
-    use std::num::NonZeroUsize;
 
     #[tokio::test]
     async fn test_parse_field_parser() {
@@ -215,9 +232,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_invoke_args() {
-        let query = "one, two)";
+        let query = "one = first, two = second)";
         let result = invoke_args(query);
-        assert_eq!(result, Ok((")", vec!["one".to_owned(), "two".to_owned()])));
+        assert_eq!(
+            result,
+            Ok((
+                ")",
+                vec![
+                    InvokeFuncArg {
+                        name: "one".to_owned(),
+                        value: "first".to_owned()
+                    },
+                    InvokeFuncArg {
+                        name: "two".to_owned(),
+                        value: "second".to_owned()
+                    }
+                ]
+            ))
+        )
     }
 
     #[tokio::test]

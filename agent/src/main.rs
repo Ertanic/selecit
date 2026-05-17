@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
     modules::{Args, ExecuteResult, ModulesRegistry, info::GetInfoModule, version::AgentVersionModule},
-    proto::{ExcavatorHeartbeat, ExcavatorMessage, Message, excavator_client::ExcavatorClient, excavator_message::Request},
+    proto::{ExcavatorHeartbeat, ExcavatorMessage, Message, MessageResult, excavator_client::ExcavatorClient, excavator_message::Request},
 };
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::codegen::tokio_stream::StreamExt;
@@ -58,9 +58,20 @@ async fn main() {
                     if let Some(module) = module {
                         let ExecuteResult { code, output } = module.execute(args).await;
 
-                        tx.send(Message::new(cmd.uid, code, output).into())
+                        let results = output
+                            .into_iter()
+                            .map(|output| MessageResult {
+                                key: cmd.name.clone(),
+                                value: output,
+                            })
+                            .collect();
+
+                        tx.send(Message::new(cmd.uid, code, results).into())
                             .await
                             .expect("failed to send response");
+                    }
+                    else {
+                        tx.send(Message::new(cmd.uid, 1, vec![]).into()).await.expect("failed to send response");
                     }
                 }
                 Request::Response(_) => {}

@@ -1,4 +1,4 @@
-use crate::proto::{ExcavatorHeartbeat, ExcavatorMessage, ExcavatorResponse, client::LOGS_MANAGER, excavator_message, excavator_server::Excavator};
+use crate::proto::{ExcavatorCommand, ExcavatorMessage, ExcavatorResponse, client::LOGS_MANAGER, excavator_message, excavator_server::Excavator};
 use futures::stream::StreamExt;
 use std::{
     collections::HashMap,
@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::{
     runtime::Handle,
-    sync::{Mutex, RwLock, broadcast, broadcast::error::SendError, mpsc},
+    sync::{Mutex, RwLock, broadcast, mpsc},
     task::block_in_place,
 };
 use tokio_stream::wrappers::ReceiverStream;
@@ -31,7 +31,7 @@ impl Hash for AgentId {
     fn hash<H: Hasher>(&self, state: &mut H) {
         block_in_place(|| {
             Handle::current().block_on(async {
-                self.0.lock().await.hash(state);
+                self.0.lock().await.name.hash(state);
             })
         })
     }
@@ -41,7 +41,7 @@ impl Eq for AgentId {}
 
 impl PartialEq for AgentId {
     fn eq(&self, other: &Self) -> bool {
-        *self.0.blocking_lock() == *other.0.blocking_lock()
+        *self.0.blocking_lock().name == *other.0.blocking_lock().name
     }
 }
 
@@ -54,6 +54,11 @@ impl Deref for AgentId {
 }
 
 impl AgentId {
+    pub fn new(name: &str, addr: SocketAddr) -> Self {
+        let inner = AgentInner { name: name.to_owned(), addr };
+        Self(Arc::new(Mutex::new(inner)))
+    }
+
     pub fn generate(addr: SocketAddr) -> Self {
         let bytes: &[u8] = unsafe { std::slice::from_raw_parts(&addr as *const _ as *const u8, std::mem::size_of::<SocketAddr>()) };
         let hex = hex::encode(&bytes[..bytes.len() / 2]);
@@ -67,6 +72,33 @@ impl AgentId {
 pub struct AgentCommandManager {
     command_tx: mpsc::Sender<Result<ExcavatorMessage, Status>>,
     response_rx: broadcast::Receiver<ExcavatorResponse>,
+}
+
+impl AgentCommandManager {
+    pub async fn send(&mut self, msg: ExcavatorCommand) -> Option<ExcavatorResponse> {
+        let uid = msg.uid.clone();
+        let msg = ExcavatorMessage {
+            request: Some(excavator_message::Request::Command(msg)),
+        };
+
+        self.command_tx.send(Ok(msg)).await.expect("channel closed");
+        while let Ok(msg) = self.response_rx.recv().await {
+            if msg.uid == uid {
+                return Some(msg);
+            }
+        }
+
+        None
+    }
+}
+
+impl Clone for AgentCommandManager {
+    fn clone(&self) -> Self {
+        Self {
+            command_tx: self.command_tx.clone(),
+            response_rx: self.response_rx.resubscribe(),
+        }
+    }
 }
 
 #[derive(Default, Clone)]

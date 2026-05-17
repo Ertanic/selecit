@@ -25,7 +25,7 @@ impl ModulesRegistry {
 
 pub struct ExecuteResult {
     pub code: i64,
-    pub output: String,
+    pub output: Vec<String>,
 }
 
 pub struct ModuleArg {

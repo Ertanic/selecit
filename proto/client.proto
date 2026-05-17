@@ -19,12 +19,7 @@ message QueryRequest {
 
 message TableCol {
   string key = 1;
-  oneof data {
-    string str = 2;
-    int64 integer = 3;
-    double floating = 4;
-    bool boolean = 5;
-  }
+  string data = 2;
 }
 
 message TableRow {
