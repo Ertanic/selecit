@@ -79,17 +79,35 @@ impl Query for QueryService {
         match query {
             QueryExpr::ListBy(field) => {
                 let map = self.1.read().await;
-                let agents = stream::iter(map.keys())
-                    .filter_map(|k| async move { Some(k.lock().await.name.clone()) })
-                    .map(|data| TableCol {
-                        key: "name".to_owned(),
-                        data,
-                    })
-                    .collect::<Vec<_>>()
-                    .await;
-                let rows = vec![TableRow { cols: agents }];
-                let response = Response::new(QueryResponse { rows });
-                Ok(response)
+                match field.as_str() {
+                    "name" => {
+                        let agents = stream::iter(map.keys())
+                            .filter_map(|k| async move { Some(k.lock().await.name.clone()) })
+                            .map(|data| TableCol {
+                                key: "name".to_owned(),
+                                data,
+                            })
+                            .collect::<Vec<_>>()
+                            .await;
+                        let rows = vec![TableRow { cols: agents }];
+                        let response = Response::new(QueryResponse { rows });
+                        Ok(response)
+                    }
+                    "addr" => {
+                        let agents = stream::iter(map.keys())
+                            .filter_map(|k| async move { Some(k.lock().await.addr.to_string()) })
+                            .map(|data| TableCol {
+                                key: "addr".to_owned(),
+                                data,
+                            })
+                            .collect::<Vec<_>>()
+                            .await;
+                        let rows = vec![TableRow { cols: agents }];
+                        let response = Response::new(QueryResponse { rows });
+                        Ok(response)
+                    }
+                    _ => Err(Status::not_found("unknown field")),
+                }
             }
             QueryExpr::SelectFrom { from, select } => {
                 let map = self.1.read().await;

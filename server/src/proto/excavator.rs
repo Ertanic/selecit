@@ -62,7 +62,7 @@ impl AgentId {
     pub fn generate(addr: SocketAddr) -> Self {
         let bytes: &[u8] = unsafe { std::slice::from_raw_parts(&addr as *const _ as *const u8, std::mem::size_of::<SocketAddr>()) };
         let hex = hex::encode(&bytes[..bytes.len() / 2]);
-        let name = format!("client{}", hex);
+        let name = format!("agent{}", hex);
 
         let inner = AgentInner { name, addr };
         Self(Arc::new(Mutex::new(inner)))
