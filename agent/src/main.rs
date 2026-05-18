@@ -42,19 +42,25 @@ async fn main() {
         .expect("failed to run excavator")
         .into_inner();
 
-    while let Some(command) = stream.next().await {
-        if let Ok(command) = command {
-            let Some(command) = command.request
-            else {
-                continue;
-            };
+    while let Some(msg) = stream.next().await {
+        let Ok(msg) = msg
+        else {
+            continue;
+        };
 
-            match command {
-                Request::Command(cmd) => {
-                    let args = Args::new(cmd.args);
+        let Some(command) = msg.request
+        else {
+            continue;
+        };
 
-                    let module = registry.get(&cmd.name).await;
-                    if let Some(module) = module {
+        match command {
+            Request::Command(cmd) => {
+                let args = Args::new(cmd.args);
+
+                let module = registry.get(&cmd.name).await;
+                if let Some(module) = module {
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
                         let ExecuteResult { code, output } = module.execute(args).await;
 
                         let results = output
@@ -68,14 +74,26 @@ async fn main() {
                         tx.send(Message::new(cmd.uid, code, results).into())
                             .await
                             .expect("failed to send response");
-                    }
-                    else {
-                        tx.send(Message::new(cmd.uid, 1, vec![]).into()).await.expect("failed to send response");
-                    }
+                    });
                 }
-                Request::Response(_) => {}
-                Request::Heartbeat(_) => {}
+                else {
+                    tx.send(
+                        Message::new(
+                            cmd.uid,
+                            1,
+                            vec![MessageResult {
+                                key: "error".to_string(),
+                                value: format!("module '{}' not found", cmd.name),
+                            }],
+                        )
+                        .into(),
+                    )
+                    .await
+                    .expect("failed to send response");
+                }
             }
+            Request::Response(_) => {}
+            Request::Heartbeat(_) => {}
         }
     }
 }
