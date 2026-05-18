@@ -1,17 +1,31 @@
 use crate::proto::ExcavatorCommandArg;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, RwLockWriteGuard};
 
 pub mod info;
 pub mod version;
 
+type ModulesMap = HashMap<&'static str, Arc<dyn Module + Send + Sync>>;
+
+pub struct ModulesRegistryBuilder<'a>(&'a mut ModulesMap);
+
+impl ModulesRegistryBuilder<'_> {
+    pub fn register(&mut self, module: impl Module + 'static + Send + Sync) -> &mut Self {
+        self.0.insert(module.name(), Arc::new(module));
+        self
+    }
+}
+
 #[derive(Default, Clone)]
-pub struct ModulesRegistry(Arc<RwLock<HashMap<&'static str, Arc<dyn Module + Send + Sync>>>>);
+pub struct ModulesRegistry(Arc<RwLock<ModulesMap>>);
 
 impl ModulesRegistry {
-    pub async fn register(&mut self, module: impl Module + 'static + Send + Sync) -> &mut ModulesRegistry {
-        self.0.write().await.insert(module.name(), Arc::new(module));
-        self
+    pub async fn build<F>(&self, builder: F)
+    where
+        F: FnOnce(&mut ModulesRegistryBuilder, &Self),
+    {
+        let mut s = self.0.write().await;
+        builder(&mut ModulesRegistryBuilder(&mut s), self);
     }
 
     pub async fn get(&self, name: &str) -> Option<Arc<dyn Module + Send + Sync>> {

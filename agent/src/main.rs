@@ -13,13 +13,12 @@ mod proto;
 
 #[tokio::main]
 async fn main() {
-    let mut registry = ModulesRegistry::default();
-    let get_info_reg = registry.clone();
+    let registry = ModulesRegistry::default();
 
     registry
-        .register(AgentVersionModule)
-        .await
-        .register(GetInfoModule::new(get_info_reg))
+        .build(|builder, registry| {
+            builder.register(AgentVersionModule).register(GetInfoModule::new(registry.clone()));
+        })
         .await;
 
     let config_path = path::use_config_path();
