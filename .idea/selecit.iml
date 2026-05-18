@@ -6,6 +6,7 @@
       <sourceFolder url="file://$MODULE_DIR$/build-common/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/client-tui/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/server/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/common/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

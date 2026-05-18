@@ -3,8 +3,13 @@ use crate::{
     modules::{Args, ExecuteResult, ModulesRegistry, info::GetInfoModule, version::AgentVersionModule},
     proto::{ExcavatorHeartbeat, ExcavatorMessage, Message, MessageResult, excavator_client::ExcavatorClient, excavator_message::Request},
 };
+use common::{SERVER_PORT, path::use_certs_folder};
+use std::path::PathBuf;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::codegen::tokio_stream::StreamExt;
+use tonic::{
+    codegen::tokio_stream::StreamExt,
+    transport::{Certificate, Channel, ClientTlsConfig},
+};
 
 mod config;
 mod modules;
@@ -25,9 +30,35 @@ async fn main() {
     let config_content = tokio::fs::read_to_string(&config_path).await.expect("unable to read config file");
     let config: Config = knus::parse("config", &config_content).expect("failed to parse config");
 
-    let addr = format!("http://{}:{}", config.server.address, config.server.port.unwrap_or(1299));
-    println!("listening server at {}", addr);
-    let mut client = ExcavatorClient::connect(addr).await.expect("failed to connect to excavator");
+    let mut client = if let Some(cert) = config.certificate {
+        let cert = {
+            let path = PathBuf::from(cert.ca_cert);
+            if path.is_absolute() { path } else { use_certs_folder().join(path) }
+        };
+
+        let cert_content = tokio::fs::read_to_string(cert).await.expect("unable to read certificate file");
+        let cert = Certificate::from_pem(cert_content);
+
+        let addr = format!("https://{}:{}", config.server.address, config.server.port.unwrap_or(SERVER_PORT));
+
+        let tls = ClientTlsConfig::new().ca_certificate(cert);
+        let channel = Channel::from_shared(addr.clone())
+            .unwrap()
+            .tls_config(tls)
+            .unwrap()
+            .connect()
+            .await
+            .expect("TLS connection failed");
+
+        println!("listening server at {}", addr);
+
+        ExcavatorClient::new(channel)
+    }
+    else {
+        let addr = format!("http://{}:{}", config.server.address, config.server.port.unwrap_or(SERVER_PORT));
+        println!("listening server at {}", addr);
+        ExcavatorClient::connect(addr.clone()).await.expect("connection to server failed")
+    };
 
     let (tx, rx) = tokio::sync::mpsc::channel(128);
     tx.send(ExcavatorMessage {

@@ -1,0 +1,4 @@
+certificates {
+    server-cert "./server-cert.pem"
+    server-key "./server-key.pem"
+}

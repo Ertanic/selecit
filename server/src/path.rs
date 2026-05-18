@@ -1,15 +1,13 @@
-use std::{env, path::PathBuf};
+use common::{path, path::use_app_folder};
+use std::path::PathBuf;
 
-const CONFIG_FILE_NAME: &str = "config.kdl";
-
-pub fn use_app_folder() -> PathBuf {
-    env::current_exe()
-        .expect("failed to get current executable")
-        .parent()
-        .expect("failed to get current executable parent")
-        .to_path_buf()
-}
+const CONFIG_FILE_NAME: &str = "server.kdl";
 
 pub fn use_config_path() -> PathBuf {
-    use_app_folder().join(CONFIG_FILE_NAME)
+    if cfg!(debug_assertions) {
+        path::use_project_folder().join(CONFIG_FILE_NAME)
+    }
+    else {
+        use_app_folder().join(CONFIG_FILE_NAME)
+    }
 }

@@ -1,1 +1,4 @@
 target/
+
+certs/*.pem
+certs/*.srl

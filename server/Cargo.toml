@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+common = { path = "../common" }
 knus = "3.3"
 tokio = { version = "1.41", features = ["full"] }
 prost = "0.14"
