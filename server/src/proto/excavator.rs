@@ -2,7 +2,6 @@ use crate::proto::{ExcavatorCommand, ExcavatorMessage, ExcavatorResponse, client
 use futures::stream::StreamExt;
 use std::{
     collections::HashMap,
-    error::Error,
     hash::{Hash, Hasher},
     net::SocketAddr,
     ops::Deref,
@@ -15,7 +14,7 @@ use tokio::{
     task::block_in_place,
 };
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Code, Request, Response, Status, Streaming, codegen::tokio_stream::Stream};
+use tonic::{Request, Response, Status, Streaming, codegen::tokio_stream::Stream};
 
 type AgentsMapInner = Arc<RwLock<HashMap<AgentId, AgentCommandManager>>>;
 

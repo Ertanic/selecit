@@ -1,5 +1,4 @@
 use crate::modules::{Args, ExecuteResult, Module, ModuleArg, ModulesRegistry};
-use std::{collections::HashMap, sync::Arc};
 
 pub struct GetInfoModule(ModulesRegistry);
 

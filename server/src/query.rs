@@ -7,7 +7,7 @@ use nom::{
         char,
         complete::{space0, space1},
     },
-    combinator::{map, map_opt},
+    combinator::map,
     multi::separated_list0,
 };
 

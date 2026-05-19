@@ -1,6 +1,8 @@
+#![allow(unused)]
+
 use crate::proto::ExcavatorCommandArg;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{RwLock, RwLockWriteGuard};
+use tokio::sync::RwLock;
 
 pub mod info;
 pub mod version;

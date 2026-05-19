@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use crate::modules::{Args, ExecuteResult, Module, ModuleArg};
 
 pub struct AgentVersionModule;
