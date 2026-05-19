@@ -224,7 +224,9 @@ impl Query for QueryService {
 
             while let Ok(log) = logs_rx.recv().await {
                 let entry = LogsQueryResponse { log: vec![log] };
-                tx.send(Ok(entry)).await.expect("failed to send log");
+                if tx.send(Ok(entry)).await.is_err() {
+                    break;
+                }
             }
         });
 

@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Run client" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+  <configuration default="false" name="Run client" type="CargoCommandRunConfiguration" factoryName="Cargo Command" singleton="false">
     <option name="buildProfileId" value="dev" />
     <option name="command" value="run -p client-tui -- connect 127.0.0.1 -t super-puper-secret-token-change-me --ca ca-cert.pem" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />

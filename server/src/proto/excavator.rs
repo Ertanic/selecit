@@ -2,6 +2,7 @@ use crate::proto::{ExcavatorCommand, ExcavatorMessage, ExcavatorResponse, client
 use futures::stream::StreamExt;
 use std::{
     collections::HashMap,
+    error::Error,
     hash::{Hash, Hasher},
     net::SocketAddr,
     ops::Deref,
@@ -14,7 +15,7 @@ use tokio::{
     task::block_in_place,
 };
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Request, Response, Status, Streaming, codegen::tokio_stream::Stream};
+use tonic::{Code, Request, Response, Status, Streaming, codegen::tokio_stream::Stream};
 
 type AgentsMapInner = Arc<RwLock<HashMap<AgentId, AgentCommandManager>>>;
 
@@ -29,11 +30,8 @@ pub struct AgentId(Arc<Mutex<AgentInner>>);
 
 impl Hash for AgentId {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        block_in_place(|| {
-            Handle::current().block_on(async {
-                self.0.lock().await.name.hash(state);
-            })
-        })
+        let inner = block_in_place(|| Handle::current().block_on(async { self.0.lock().await }));
+        inner.name.hash(state);
     }
 }
 
@@ -41,7 +39,16 @@ impl Eq for AgentId {}
 
 impl PartialEq for AgentId {
     fn eq(&self, other: &Self) -> bool {
-        *self.0.blocking_lock().name == *other.0.blocking_lock().name
+        block_in_place(|| {
+            Handle::current().block_on(async {
+                let left = self.0.lock().await;
+                // if the right is the left, then instead of catching a deadlock, we return true.
+                match other.0.try_lock() {
+                    Ok(right) => *left == *right,
+                    Err(_) => true,
+                }
+            })
+        })
     }
 }
 
@@ -144,6 +151,7 @@ impl Excavator for ExcavatorService {
 
                                 tokio::spawn({
                                     let id = id.clone();
+                                    let map = self.0.clone();
                                     async move {
                                         while let Some(msg) = stream.next().await {
                                             match msg {
@@ -154,6 +162,7 @@ impl Excavator for ExcavatorService {
                                                     excavator_message::Request::Response(response) => {
                                                         if let Err(err) = response_tx.send(response) {
                                                             LOGS_MANAGER.send_log(format!("occurred error: {err}")).await;
+                                                            break;
                                                         }
                                                     }
                                                     excavator_message::Request::Command(_) => {
@@ -162,6 +171,7 @@ impl Excavator for ExcavatorService {
                                                 },
                                                 Err(err) => {
                                                     LOGS_MANAGER.send_log(format!("occurred error: {err}")).await;
+                                                    break;
                                                 }
                                                 _ => {
                                                     LOGS_MANAGER
@@ -169,6 +179,12 @@ impl Excavator for ExcavatorService {
                                                         .await;
                                                 }
                                             }
+                                        }
+
+                                        LOGS_MANAGER.send_log(format!("exit agent ({}) event loop", id.lock().await.name)).await;
+
+                                        if map.write().await.remove_entry(&id).is_some() {
+                                            LOGS_MANAGER.send_log(format!("agent ({}) disconnected", id.lock().await.name)).await;
                                         }
                                     }
                                 });
