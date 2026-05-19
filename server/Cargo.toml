@@ -16,6 +16,7 @@ lazy_static = "1.5"
 futures = "0.3"
 small_uid = "0.2.4"
 nom = "8.0.0"
+thiserror = "2.0"
 
 [build-dependencies]
 build-common = { path = "../build-common" }

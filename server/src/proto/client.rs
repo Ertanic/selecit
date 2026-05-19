@@ -1,10 +1,10 @@
 use crate::{
     proto::{
         ExcavatorCommand, ExcavatorCommandArg, LogsQueryRequest, LogsQueryResponse, QueryRequest, QueryResponse, TableCol, TableRow,
-        excavator::{AgentId, AgentsMap},
+        excavator::{AgentCommandManager, AgentId, AgentsMap},
         query_server::Query,
     },
-    query::{QueryExpr, parse_query},
+    query::{QueryConditionExpr, QueryConditionTerm, QueryExpr, QueryValue, parse_query},
 };
 use futures::{StreamExt, stream};
 use lazy_static::lazy_static;
@@ -14,7 +14,9 @@ use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     ops::Deref,
     pin::Pin,
+    sync::Arc,
 };
+use thiserror::Error;
 use tokio::sync::{Mutex, broadcast, broadcast::error::SendError};
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
@@ -77,8 +79,46 @@ impl Query for QueryService {
             .map_err(|_| Status::invalid_argument("failed to parse query"))?;
 
         match query {
-            QueryExpr::ListBy(field) => {
-                let map = self.1.read().await;
+            QueryExpr::ListBy { field, condition } => {
+                let mut map = self.1.write().await;
+
+                if let Some(condition) = condition {
+                    let condition = Arc::new(condition);
+                    let res = stream::iter(map.iter_mut())
+                        .filter_map({
+                            |(id, agent)| {
+                                let condition = condition.clone();
+                                let field = field.clone();
+                                async move {
+                                    if let Ok(result) = EvalContext::new(agent).eval(&condition).await
+                                        && result
+                                    {
+                                        let id = id.lock().await;
+                                        Some(if field.as_str() == "name" {
+                                            id.name.clone()
+                                        }
+                                        else {
+                                            id.addr.to_string()
+                                        })
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                        })
+                        .map({
+                            let field = field.clone();
+                            move |r| TableCol { key: field.clone(), data: r }
+                        })
+                        .collect::<Vec<_>>()
+                        .await;
+
+                    let rows = vec![TableRow { cols: res }];
+                    let response = Response::new(QueryResponse { rows });
+                    return Ok(response);
+                }
+
                 match field.as_str() {
                     "name" => {
                         let agents = stream::iter(map.keys())
@@ -232,5 +272,121 @@ impl Query for QueryService {
 
         let stream = ReceiverStream::new(rx);
         Ok(Response::new(Box::pin(stream)))
+    }
+}
+
+#[derive(Error, Debug)]
+enum EvalError {
+    #[error("not a number: {0}")]
+    NotNumber(QueryValue),
+    #[error("not a boolean: {0}")]
+    NotBool(QueryValue),
+    #[error("invoke error {0}")]
+    InvokeError(String),
+}
+
+fn must_number(val: &QueryValue) -> Result<f64, EvalError> {
+    match val {
+        QueryValue::Number(n) => Ok(*n),
+        _ => Err(EvalError::NotNumber(val.clone())),
+    }
+}
+
+struct EvalContext<'a> {
+    agent: &'a mut AgentCommandManager,
+}
+
+impl<'a> EvalContext<'a> {
+    fn new(agent: &'a mut AgentCommandManager) -> Self {
+        Self { agent }
+    }
+
+    async fn eval(&mut self, expr: &QueryConditionExpr) -> Result<bool, EvalError> {
+        match expr {
+            QueryConditionExpr::And { left, right } => {
+                let left = Box::pin(self.eval(left)).await?;
+                let right = Box::pin(self.eval(right)).await?;
+                Ok(left && right)
+            }
+            QueryConditionExpr::Or { left, right } => {
+                let left = Box::pin(self.eval(left)).await?;
+                let right = Box::pin(self.eval(right)).await?;
+                Ok(left || right)
+            }
+            QueryConditionExpr::Term(term) => match self.eval_term(term).await? {
+                QueryValue::Bool(b) => Ok(b),
+                val => Err(EvalError::NotBool(val.clone())),
+            },
+        }
+    }
+
+    async fn eval_term(&mut self, term: &QueryConditionTerm) -> Result<QueryValue, EvalError> {
+        match term {
+            QueryConditionTerm::Eq { left, right } => Ok(QueryValue::Bool(Box::pin(self.eval_eq(left, right)).await?)),
+            QueryConditionTerm::More { left, right } => Ok(QueryValue::Bool(Box::pin(self.eval_more(left, right)).await?)),
+            QueryConditionTerm::Less { left, right } => Ok(QueryValue::Bool(Box::pin(self.eval_less(left, right)).await?)),
+            QueryConditionTerm::Value(val) => Ok(val.clone()),
+        }
+    }
+
+    async fn eval_eq(&mut self, left: &QueryConditionTerm, right: &QueryConditionTerm) -> Result<bool, EvalError> {
+        let left = self.eval_term(left).await?;
+        let right = self.eval_term(right).await?;
+
+        if let QueryValue::FnField { func, field } = &left {
+            let cmd = ExcavatorCommand {
+                uid: SmallUid::new().to_string(),
+                name: func.name.clone(),
+                args: func
+                    .args
+                    .iter()
+                    .map(|a| ExcavatorCommandArg {
+                        key: a.name.clone(),
+                        value: a.value.clone(),
+                    })
+                    .collect(),
+            };
+
+            Ok(self
+                .agent
+                .send(cmd)
+                .await
+                .ok_or(EvalError::InvokeError(format!("{}.{}", func.name, field)))?
+                .results
+                .iter()
+                .any(|r| {
+                    r.key == *field
+                        && (match &right {
+                            QueryValue::FnField { .. } => false,
+                            QueryValue::Identifier(i) => r.value == *i,
+                            QueryValue::String(s) => r.value == *s,
+                            QueryValue::Number(n) => {
+                                if let Ok(val) = r.value.parse::<f64>() {
+                                    val == *n
+                                }
+                                else {
+                                    false
+                                }
+                            }
+                            QueryValue::Bool(b) => *b,
+                            QueryValue::Null => r.value == "null",
+                        })
+                }))
+        }
+        else {
+            Ok(left == right)
+        }
+    }
+
+    async fn eval_less(&mut self, left: &QueryConditionTerm, right: &QueryConditionTerm) -> Result<bool, EvalError> {
+        let left = must_number(&self.eval_term(left).await?)?;
+        let right = must_number(&self.eval_term(right).await?)?;
+        Ok(left < right)
+    }
+
+    async fn eval_more(&mut self, left: &QueryConditionTerm, right: &QueryConditionTerm) -> Result<bool, EvalError> {
+        let left = must_number(&self.eval_term(left).await?)?;
+        let right = must_number(&self.eval_term(right).await?)?;
+        Ok(left > right)
     }
 }

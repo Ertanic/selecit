@@ -2,54 +2,256 @@ use crate::proto::client::LOGS_MANAGER;
 use nom::{
     IResult, Parser,
     branch::alt,
-    bytes::{complete::take_while, tag},
-    character::{
-        char,
-        complete::{space0, space1},
+    bytes::{
+        complete::{take_till, take_while},
+        tag,
     },
-    combinator::map,
+    character::complete::{char, space0, space1},
+    combinator::{map, map_opt, opt},
     multi::separated_list0,
+    number::complete::double,
+    sequence::{delimited, separated_pair},
 };
+use std::fmt::Display;
 
 #[derive(Debug, PartialEq)]
 pub struct QueryParseError;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct InvokeFuncArg {
     pub name: String,
     pub value: String,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct InvokeFunc {
     pub name: String,
     pub args: Vec<InvokeFuncArg>,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum QueryValue {
+    FnField { func: InvokeFunc, field: String },
+    Identifier(String),
+    String(String),
+    Number(f64),
+    Bool(bool),
+    Null,
+}
+
+impl Display for QueryValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            QueryValue::FnField { func, field } => format!(
+                "{}({}).{field}",
+                func.name,
+                func.args
+                    .iter()
+                    .map(|arg| format!("{}={}", arg.name, arg.value))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            QueryValue::Identifier(s) => s.clone(),
+            QueryValue::String(s) => s.clone(),
+            QueryValue::Number(n) => n.to_string(),
+            QueryValue::Bool(b) => b.to_string(),
+            QueryValue::Null => "null".to_string(),
+        };
+        write!(f, "{}", str)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum QueryOperation {
+    Eq,
+    More,
+    Less,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum QueryConditionTerm {
+    Eq {
+        left: Box<QueryConditionTerm>,
+        right: Box<QueryConditionTerm>,
+    },
+    More {
+        left: Box<QueryConditionTerm>,
+        right: Box<QueryConditionTerm>,
+    },
+    Less {
+        left: Box<QueryConditionTerm>,
+        right: Box<QueryConditionTerm>,
+    },
+    Value(QueryValue),
+}
+
+#[derive(Debug, PartialEq)]
+enum QueryExprOperation {
+    And,
+    Or,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum QueryConditionExpr {
+    And {
+        left: Box<QueryConditionExpr>,
+        right: Box<QueryConditionExpr>,
+    },
+    Or {
+        left: Box<QueryConditionExpr>,
+        right: Box<QueryConditionExpr>,
+    },
+    Term(QueryConditionTerm),
+}
+
 #[derive(Debug, PartialEq)]
 pub enum QueryExpr {
-    ListBy(String),
+    ListBy { field: String, condition: Option<QueryConditionExpr> },
     SelectFrom { from: String, select: Vec<InvokeFunc> },
 }
 
-fn identifier(input: &str) -> IResult<&str, &str> {
-    take_while(char::is_alphanumeric).parse(input)
+fn identifier(input: &str) -> IResult<&str, QueryValue> {
+    map_opt(take_while(|c: char| c.is_alphanumeric() || c == '_' || c == '-'), |s: &str| {
+        if s.is_empty() {
+            None
+        }
+        else {
+            Some(QueryValue::Identifier(s.to_string()))
+        }
+    })
+    .parse(input)
 }
 
-fn field(input: &str) -> IResult<&str, &str> {
-    take_while(char::is_alphabetic).parse(input)
+fn string(input: &str) -> IResult<&str, QueryValue> {
+    map_opt(delimited(char('"'), take_till(|c: char| c == '"'), char('"')), |s: &str| {
+        if s.is_empty() { None } else { Some(QueryValue::String(s.to_string())) }
+    })
+    .parse(input)
+}
+
+fn number(input: &str) -> IResult<&str, QueryValue> {
+    map(double, QueryValue::Number).parse(input)
+}
+
+fn boolean(input: &str) -> IResult<&str, QueryValue> {
+    map(alt((tag("true"), tag("false"))), |s: &str| QueryValue::Bool(s == "true")).parse(input)
+}
+
+fn null(input: &str) -> IResult<&str, QueryValue> {
+    map(tag("null"), |_| QueryValue::Null).parse(input)
+}
+
+fn func_field(input: &str) -> IResult<&str, QueryValue> {
+    map(separated_pair(invoke_func, char('.'), identifier), |(f, i)| QueryValue::FnField {
+        func: f,
+        field: i.to_string(),
+    })
+    .parse(input)
+}
+
+fn value(input: &str) -> IResult<&str, QueryValue> {
+    alt((string, func_field, identifier, number, boolean, null)).parse(input)
+}
+
+fn operation(input: &str) -> IResult<&str, QueryOperation> {
+    alt((
+        map(char('='), |_| QueryOperation::Eq),
+        map(char('<'), |_| QueryOperation::Less),
+        map(char('>'), |_| QueryOperation::More),
+    ))
+    .parse(input)
+}
+
+fn condition_term(input: &str) -> IResult<&str, QueryConditionTerm> {
+    let (input, left) = map(value, QueryConditionTerm::Value).parse(input)?;
+    let (input, _) = space0(input)?;
+
+    let (input, op) = opt(operation).parse(input)?;
+    if let Some(op) = op {
+        let (input, _) = space0(input)?;
+        let (input, right) = condition_term(input)?;
+
+        Ok((
+            input,
+            match op {
+                QueryOperation::Eq => QueryConditionTerm::Eq {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                QueryOperation::More => QueryConditionTerm::More {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                QueryOperation::Less => QueryConditionTerm::Less {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+            },
+        ))
+    }
+    else {
+        Ok((input, left))
+    }
+}
+
+fn condition_expr_op(input: &str) -> IResult<&str, QueryExprOperation> {
+    alt((map(char('&'), |_| QueryExprOperation::And), map(char('|'), |_| QueryExprOperation::Or))).parse(input)
+}
+
+fn condition_expr(input: &str) -> IResult<&str, QueryConditionExpr> {
+    let (input, left) = map(condition_term, QueryConditionExpr::Term).parse(input)?;
+    let (input, _) = space0(input)?;
+
+    let (input, op) = opt(condition_expr_op).parse(input)?;
+    if let Some(op) = op {
+        let (input, _) = space0(input)?;
+        let (input, right) = condition_expr(input)?;
+
+        Ok((
+            input,
+            match op {
+                QueryExprOperation::And => QueryConditionExpr::And {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                QueryExprOperation::Or => QueryConditionExpr::Or {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+            },
+        ))
+    }
+    else {
+        Ok((input, left))
+    }
+}
+
+fn condition(input: &str) -> IResult<&str, QueryConditionExpr> {
+    let (input, _) = space1(input)?;
+    let (input, _) = tag("where").parse(input)?;
+    let (input, _) = space1(input)?;
+
+    condition_expr(input)
 }
 
 fn list_by(input: &str) -> IResult<&str, QueryExpr> {
     let (input, _) = tag("list by").parse(input)?;
     let (input, _) = space1(input)?;
-    let (input, field_name) = field(input)?;
+    let (input, field_name) = identifier(input)?;
 
-    Ok((input, QueryExpr::ListBy(field_name.to_string())))
+    let (input, condition) = opt(condition).parse(input)?;
+
+    Ok((
+        input,
+        QueryExpr::ListBy {
+            field: field_name.to_string(),
+            condition,
+        },
+    ))
 }
 
 fn invoke_arg(input: &str) -> IResult<&str, InvokeFuncArg> {
-    let (input, name) = field(input)?;
+    let (input, name) = identifier(input)?;
 
     let (input, _) = space0(input)?;
     let (input, _) = char('=').parse(input)?;
@@ -71,7 +273,7 @@ fn invoke_args(input: &str) -> IResult<&str, Vec<InvokeFuncArg>> {
 }
 
 fn invoke_func(input: &str) -> IResult<&str, InvokeFunc> {
-    let (input, name) = map(field, |s| s.to_string()).parse(input)?;
+    let (input, name) = map(identifier, |s| s.to_string()).parse(input)?;
     let (input, _) = space0(input)?;
     let (input, _) = char('(').parse(input)?;
     let (input, _) = space0(input)?;
@@ -135,29 +337,136 @@ mod tests {
     #[tokio::test]
     async fn test_parse_field_parser() {
         let query = "list by name";
-        let result = field(&query[8..]);
-        assert_eq!(result, Ok(("", "name")));
+        let result = identifier(&query[8..]);
+        assert_eq!(result, Ok(("", QueryValue::Identifier("name".to_owned()))));
     }
 
     #[tokio::test]
     async fn test_parse_list_by() {
         let query = "list by name";
-        let result = tag::<_, _, nom::error::Error<&str>>("list by").parse(query);
-        assert_eq!(result, Ok((" name", "list by")));
-    }
-
-    #[tokio::test]
-    async fn test_parse_list_by_parser() {
-        let query = "list by name";
         let result = list_by(query);
-        assert_eq!(result, Ok(("", QueryExpr::ListBy("name".to_string()))));
+        assert_eq!(
+            result,
+            Ok((
+                "",
+                QueryExpr::ListBy {
+                    field: "name".to_owned(),
+                    condition: None
+                }
+            ))
+        );
     }
 
     #[tokio::test]
-    async fn test_parse_query_list_by_name() {
-        let query = "list by name";
-        let result = parse_query(query).await;
-        assert_eq!(result, Ok(QueryExpr::ListBy("name".to_string())));
+    async fn test_parse_list_by_where() {
+        let query = "list by name where addr = \"127.0.0.1:8080\"";
+        let result = list_by(query);
+        assert_eq!(
+            result,
+            Ok((
+                "",
+                QueryExpr::ListBy {
+                    field: "name".to_owned(),
+                    condition: Some(QueryConditionExpr::Term(QueryConditionTerm::Eq {
+                        left: Box::new(QueryConditionTerm::Value(QueryValue::Identifier("addr".to_string()))),
+                        right: Box::new(QueryConditionTerm::Value(QueryValue::String("127.0.0.1:8080".to_string()))),
+                    }))
+                }
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_parse_list_by_where_invoke_func_field() {
+        let query = "list by name where version().version = \"1.0.0\"";
+        let result = list_by(query);
+        assert_eq!(
+            result,
+            Ok((
+                "",
+                QueryExpr::ListBy {
+                    field: "name".to_owned(),
+                    condition: Some(QueryConditionExpr::Term(QueryConditionTerm::Eq {
+                        left: Box::new(QueryConditionTerm::Value(QueryValue::FnField {
+                            func: InvokeFunc {
+                                name: "version".to_owned(),
+                                args: vec![]
+                            },
+                            field: "version".to_owned()
+                        })),
+                        right: Box::new(QueryConditionTerm::Value(QueryValue::String("1.0.0".to_string()))),
+                    }))
+                }
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_parse_list_by_where_invoke_func_field_with_args() {
+        let query = "list by name where info(type = modules).version = \"1.0.0\"";
+        let result = list_by(query);
+        assert_eq!(
+            result,
+            Ok((
+                "",
+                QueryExpr::ListBy {
+                    field: "name".to_owned(),
+                    condition: Some(QueryConditionExpr::Term(QueryConditionTerm::Eq {
+                        left: Box::new(QueryConditionTerm::Value(QueryValue::FnField {
+                            func: InvokeFunc {
+                                name: "info".to_owned(),
+                                args: vec![InvokeFuncArg {
+                                    name: "type".to_owned(),
+                                    value: "modules".to_owned(),
+                                }],
+                            },
+                            field: "version".to_owned()
+                        })),
+                        right: Box::new(QueryConditionTerm::Value(QueryValue::String("1.0.0".to_string()))),
+                    }))
+                }
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_parse_list_by_where_invoke_func_field_with_args_and_other() {
+        let query = "list by name where info(type = modules).version = \"version\" & version().version = \"0.1.0\"";
+        let result = list_by(query);
+        assert_eq!(
+            result,
+            Ok((
+                "",
+                QueryExpr::ListBy {
+                    field: "name".to_owned(),
+                    condition: Some(QueryConditionExpr::And {
+                        left: Box::new(QueryConditionExpr::Term(QueryConditionTerm::Eq {
+                            left: Box::new(QueryConditionTerm::Value(QueryValue::FnField {
+                                func: InvokeFunc {
+                                    name: "info".to_string(),
+                                    args: vec![InvokeFuncArg {
+                                        name: "type".to_string(),
+                                        value: "modules".to_string(),
+                                    }],
+                                },
+                                field: "version".to_string()
+                            })),
+                            right: Box::new(QueryConditionTerm::Value(QueryValue::String("version".to_string()))),
+                        })),
+                        right: Box::new(QueryConditionExpr::Term(QueryConditionTerm::Eq {
+                            left: Box::new(QueryConditionTerm::Value(QueryValue::FnField {
+                                func: InvokeFunc {
+                                    name: "version".to_string(),
+                                    args: vec![],
+                                },
+                                field: "version".to_string()
+                            })),
+                            right: Box::new(QueryConditionTerm::Value(QueryValue::String("0.1.0".to_string()))),
+                        })),
+                    })
+                }
+            ))
+        );
     }
 
     #[tokio::test]
@@ -168,7 +477,7 @@ mod tests {
 
         let result = identifier(rest);
 
-        assert_eq!(result, Ok((" select version()", "name")));
+        assert_eq!(result, Ok((" select version()", QueryValue::Identifier("name".to_string()))));
     }
 
     #[tokio::test]

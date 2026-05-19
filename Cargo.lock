@@ -1933,6 +1933,7 @@ dependencies = [
  "nom 8.0.0",
  "prost",
  "small_uid",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tonic",
