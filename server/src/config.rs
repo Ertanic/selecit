@@ -8,9 +8,10 @@ pub struct Server {
     pub port: u16,
 }
 
-#[derive(Decode)]
+#[derive(Decode, Clone)]
 pub struct Auth {
-    token: String,
+    #[knus(child, unwrap(argument))]
+    pub token: String,
 }
 
 #[derive(Decode, Default)]

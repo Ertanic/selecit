@@ -11,8 +11,15 @@ use ratatui::{
 };
 use std::{io, sync::Arc};
 use tokio::{runtime::Handle, sync::RwLock, task::block_in_place};
-use tonic::{codegen::tokio_stream::StreamExt, transport::Channel};
+use tonic::{
+    Request, Status,
+    codegen::{InterceptedService, tokio_stream::StreamExt},
+    transport::Channel,
+};
 use tui_input::{Input, backend::crossterm::EventHandler};
+
+pub type InterceptFn = Box<dyn FnMut(Request<()>) -> Result<Request<()>, Status>>;
+type InterceptedClient = QueryClient<InterceptedService<Channel, InterceptFn>>;
 
 #[derive(Default, Clone, Copy)]
 enum Tab {
@@ -52,14 +59,14 @@ pub struct App {
 
     input: Input,
 
-    client: Option<QueryClient<Channel>>,
+    client: Option<InterceptedClient>,
     _logs_cache: Arc<RwLock<Vec<String>>>,
     _logs_listener: Option<tokio::task::JoinHandle<()>>,
     _query_cache: Option<Vec<TableRow>>,
 }
 
 impl App {
-    pub async fn new(addr: String, mut client: QueryClient<Channel>) -> Self {
+    pub async fn new(addr: String, mut client: InterceptedClient) -> Self {
         let mut stream = client.logs(LogsQueryRequest {}).await.expect("unable to load server logs").into_inner();
         let logs = Arc::new(RwLock::new(Vec::new()));
 

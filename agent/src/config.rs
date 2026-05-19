@@ -16,6 +16,7 @@ pub struct Certificate {
 
 #[derive(Decode, Default)]
 pub struct Auth {
+    #[knus(child, unwrap(argument))]
     pub token: String,
 }
 

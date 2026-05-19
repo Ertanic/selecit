@@ -3,11 +3,12 @@ use crate::{
     modules::{Args, ExecuteResult, ModulesRegistry, info::GetInfoModule, version::AgentVersionModule},
     proto::{ExcavatorHeartbeat, ExcavatorMessage, Message, MessageResult, excavator_client::ExcavatorClient, excavator_message::Request},
 };
-use common::{SERVER_PORT, path::use_certs_folder};
-use std::path::PathBuf;
+use common::{AUTHORIZATION, SERVER_PORT, path::use_certs_folder};
+use std::{path::PathBuf, str::FromStr};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{
     codegen::tokio_stream::StreamExt,
+    metadata::MetadataValue,
     transport::{Certificate, Channel, ClientTlsConfig},
 };
 
@@ -28,7 +29,15 @@ async fn main() {
 
     let config_path = path::use_config_path();
     let config_content = tokio::fs::read_to_string(&config_path).await.expect("unable to read config file");
-    let config: Config = knus::parse("config", &config_content).expect("failed to parse config");
+    let mut config: Config = knus::parse("config", &config_content).expect("failed to parse config");
+
+    let interceptor = move |mut req: tonic::Request<()>| {
+        if let Some(auth) = config.auth.as_mut() {
+            req.metadata_mut()
+                .insert(AUTHORIZATION, MetadataValue::from_str(auth.token.as_str()).unwrap());
+        }
+        Ok(req)
+    };
 
     let mut client = if let Some(cert) = config.certificate {
         let cert = {
@@ -52,12 +61,19 @@ async fn main() {
 
         println!("listening server at {}", addr);
 
-        ExcavatorClient::new(channel)
+        ExcavatorClient::with_interceptor(channel, interceptor)
     }
     else {
         let addr = format!("http://{}:{}", config.server.address, config.server.port.unwrap_or(SERVER_PORT));
         println!("listening server at {}", addr);
-        ExcavatorClient::connect(addr.clone()).await.expect("connection to server failed")
+
+        let channel = Channel::from_shared(addr.clone())
+            .unwrap()
+            .connect()
+            .await
+            .expect("connection to server failed");
+
+        ExcavatorClient::with_interceptor(channel, interceptor)
     };
 
     let (tx, rx) = tokio::sync::mpsc::channel(128);

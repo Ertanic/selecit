@@ -7,9 +7,13 @@ use crate::{
         query_server::QueryServer,
     },
 };
-use common::{SERVER_PORT, path::use_certs_folder};
+use common::{SERVER_PORT, path::use_certs_folder, AUTHORIZATION};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use tonic::transport::{Identity, Server, ServerTlsConfig};
+use tonic::{
+    Request, Status,
+    service::InterceptorLayer,
+    transport::{Identity, Server, ServerTlsConfig},
+};
 
 mod config;
 mod path;
@@ -31,7 +35,7 @@ async fn main() {
 
     LOGS_MANAGER.send_log(format!("server listening on {}", addr)).await;
 
-    let mut builder = if let Some(certs) = config.certificates {
+    let builder = if let Some(certs) = config.certificates {
         let cert_path = {
             let path = certs.server_cert.path;
             if path.is_absolute() { path } else { use_certs_folder().join(path) }
@@ -63,7 +67,30 @@ async fn main() {
         Server::builder()
     };
 
+    if config.auth.is_some() {
+        LOGS_MANAGER.send_log("server using token auth".to_owned()).await;
+    }
+
+    let mut auth = config.auth;
     builder
+        .layer(InterceptorLayer::new(move |req: Request<()>| {
+            if let Some(auth) = auth.as_mut() {
+                if req
+                    .metadata()
+                    .get(AUTHORIZATION)
+                    .map(|header| header.to_str())
+                    .is_some_and(|s| s.is_ok_and(|s| s == auth.token))
+                {
+                    Ok(req)
+                }
+                else {
+                    Err(Status::unauthenticated("unauthorized"))
+                }
+            }
+            else {
+                Ok(req)
+            }
+        }))
         .add_service(ExcavatorServer::new(ExcavatorService::new(client_map.clone())))
         .add_service(QueryServer::new(QueryService::new(LOGS_MANAGER.subscribe(), client_map)))
         .serve(addr)

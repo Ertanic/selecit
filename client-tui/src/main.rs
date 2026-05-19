@@ -1,12 +1,15 @@
 use crate::{
     args::{Args, Command},
     proto::query_client::QueryClient,
-    tui::App,
+    tui::{App, InterceptFn},
 };
 use clap::Parser;
-use common::{SERVER_PORT, path::use_certs_folder};
-use std::path::PathBuf;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig};
+use common::{AUTHORIZATION, SERVER_PORT, path::use_certs_folder};
+use std::{path::PathBuf, str::FromStr};
+use tonic::{
+    metadata::MetadataValue,
+    transport::{Certificate, Channel, ClientTlsConfig},
+};
 
 mod args;
 mod path;
@@ -17,7 +20,19 @@ mod tui;
 async fn main() {
     let args = Args::parse();
     match args.command {
-        Command::Connect { host, port, ca: ca_cert } => {
+        Command::Connect {
+            host,
+            port,
+            ca: ca_cert,
+            mut token,
+        } => {
+            let interceptor: InterceptFn = Box::new(move |mut req: tonic::Request<()>| {
+                if let Some(auth) = token.as_mut() {
+                    req.metadata_mut().insert(AUTHORIZATION, MetadataValue::from_str(auth.as_str()).unwrap());
+                }
+                Ok(req)
+            });
+
             let (client, server_addr) = if let Some(ca_cert) = ca_cert {
                 let cert = {
                     let path = PathBuf::from(ca_cert);
@@ -40,12 +55,16 @@ async fn main() {
 
                 println!("listening server at {}", server_addr);
 
-                (QueryClient::new(channel), server_addr)
+                (QueryClient::with_interceptor(channel, interceptor), server_addr)
             }
             else {
                 let server_addr = format!("http://{}:{}", host, port.unwrap_or(SERVER_PORT));
-                let client = QueryClient::connect(server_addr.clone()).await.expect("failed to connect");
-                (client, server_addr)
+                let channel = Channel::from_shared(server_addr.clone())
+                    .unwrap()
+                    .connect()
+                    .await
+                    .expect("HTTP connection failed");
+                (QueryClient::with_interceptor(channel, interceptor), server_addr)
             };
 
             let mut terminal = ratatui::init();

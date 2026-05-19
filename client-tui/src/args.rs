@@ -4,11 +4,19 @@ use clap::{Parser, Subcommand};
 pub enum Command {
     #[command(about = "Connect to a Selecit server")]
     Connect {
+        /// Server host
         host: String,
+
+        /// Server port
         port: Option<u16>,
+
         /// Path to the CA certificate
         #[arg(long)]
         ca: Option<String>,
+
+        /// Authentication token
+        #[arg(long, short)]
+        token: Option<String>,
     },
 }
 
