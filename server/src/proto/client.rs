@@ -84,21 +84,26 @@ impl Query for QueryService {
 
                 if let Some(condition) = condition {
                     let condition = Arc::new(condition);
-                    let res = stream::iter(map.iter_mut())
+                    let rows = stream::iter(map.iter_mut())
                         .filter_map({
                             |(id, agent)| {
                                 let condition = condition.clone();
                                 let field = field.clone();
                                 async move {
-                                    if let Ok(result) = EvalContext::new(agent).eval(&condition).await
-                                        && result
-                                    {
-                                        let id = id.lock().await;
-                                        Some(if field.as_str() == "name" {
-                                            id.name.clone()
+                                    let result = match EvalContext::new(agent).eval(&condition).await {
+                                        Ok(res) => res,
+                                        Err(err) => {
+                                            LOGS_MANAGER.send_log(format!("failed to evaluate condition: '{err}'")).await;
+                                            return None;
                                         }
-                                        else {
-                                            id.addr.to_string()
+                                    };
+
+                                    if result {
+                                        let id = id.lock().await;
+                                        Some(match field.as_str() {
+                                            "name" => id.name.clone(),
+                                            "addr" => id.addr.to_string(),
+                                            _ => return None,
                                         })
                                     }
                                     else {
@@ -109,44 +114,36 @@ impl Query for QueryService {
                         })
                         .map({
                             let field = field.clone();
-                            move |r| TableCol { key: field.clone(), data: r }
+                            move |r| TableRow {
+                                cols: vec![TableCol { key: field.clone(), data: r }],
+                            }
                         })
                         .collect::<Vec<_>>()
                         .await;
 
-                    let rows = vec![TableRow { cols: res }];
                     let response = Response::new(QueryResponse { rows });
-                    return Ok(response);
+                    Ok(response)
                 }
-
-                match field.as_str() {
-                    "name" => {
-                        let agents = stream::iter(map.keys())
-                            .filter_map(|k| async move { Some(k.lock().await.name.clone()) })
-                            .map(|data| TableCol {
-                                key: "name".to_owned(),
-                                data,
-                            })
-                            .collect::<Vec<_>>()
-                            .await;
-                        let rows = vec![TableRow { cols: agents }];
-                        let response = Response::new(QueryResponse { rows });
-                        Ok(response)
-                    }
-                    "addr" => {
-                        let agents = stream::iter(map.keys())
-                            .filter_map(|k| async move { Some(k.lock().await.addr.to_string()) })
-                            .map(|data| TableCol {
-                                key: "addr".to_owned(),
-                                data,
-                            })
-                            .collect::<Vec<_>>()
-                            .await;
-                        let rows = vec![TableRow { cols: agents }];
-                        let response = Response::new(QueryResponse { rows });
-                        Ok(response)
-                    }
-                    _ => Err(Status::not_found("unknown field")),
+                else {
+                    let rows = stream::iter(map.keys())
+                        .filter_map(|k| {
+                            let field = field.clone();
+                            async move {
+                                let id = k.lock().await;
+                                Some(match field.as_str() {
+                                    "name" => id.name.clone(),
+                                    "addr" => id.addr.to_string(),
+                                    _ => return None,
+                                })
+                            }
+                        })
+                        .map(|data| TableRow {
+                            cols: vec![TableCol { key: field.clone(), data }],
+                        })
+                        .collect::<Vec<_>>()
+                        .await;
+                    let response = Response::new(QueryResponse { rows });
+                    Ok(response)
                 }
             }
             QueryExpr::SelectFrom { from, select } => {
