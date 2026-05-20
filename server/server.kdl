@@ -1,7 +1,7 @@
-certificates {
-    server-cert "server-cert.pem"
-    server-key "server-key.pem"
-}
+// certificates {
+//     server-cert "server-cert.pem"
+//     server-key "server-key.pem"
+// }
 
 auth {
     token "super-puper-secret-token-change-me"

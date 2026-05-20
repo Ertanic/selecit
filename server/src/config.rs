@@ -4,7 +4,9 @@ use knus::Decode;
 
 #[derive(Decode)]
 pub struct Server {
+    #[knus(child, unwrap(argument))]
     pub address: String,
+    #[knus(child, unwrap(argument))]
     pub port: u16,
 }
 

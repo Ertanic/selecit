@@ -10,12 +10,10 @@ pub fn use_app_folder() -> PathBuf {
         .to_path_buf()
 }
 
-#[cfg(debug_assertions)]
 pub fn use_project_folder() -> PathBuf {
     PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("failed to get CARGO_MANIFEST_DIR"))
 }
 
-#[cfg(debug_assertions)]
 pub fn use_workspace_folder() -> PathBuf {
     use_project_folder().join("..")
 }

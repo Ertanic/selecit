@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 
 pub mod info;
 pub mod version;
+pub mod env;
 
 type ModulesMap = HashMap<&'static str, Arc<dyn Module + Send + Sync>>;
 

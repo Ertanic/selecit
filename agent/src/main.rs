@@ -1,6 +1,6 @@
 use crate::{
     config::Config,
-    modules::{Args, ExecuteResult, ModulesRegistry, info::GetInfoModule, version::AgentVersionModule},
+    modules::{Args, ExecuteResult, ModulesRegistry, env::EnvExplorer, info::GetInfoModule, version::AgentVersionModule},
     proto::{ExcavatorHeartbeat, ExcavatorMessage, Message, MessageResult, excavator_client::ExcavatorClient, excavator_message::Request},
 };
 use common::{AUTHORIZATION, SERVER_PORT, path::use_certs_folder};
@@ -23,7 +23,10 @@ async fn main() {
 
     registry
         .build(|builder, registry| {
-            builder.register(AgentVersionModule).register(GetInfoModule::new(registry.clone()));
+            builder
+                .register(AgentVersionModule)
+                .register(GetInfoModule::new(registry.clone()))
+                .register(EnvExplorer);
         })
         .await;
 
