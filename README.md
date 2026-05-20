@@ -154,6 +154,28 @@ async fn main() {
 }
 ```
 
+## Build
+
+The project has no unnecessary dependencies, so you can run it using the standard cargo tool.
+
+```bash
+cargo build -r
+```
+
+## Run client
+
+You can launch the client using the connect command and then specify the server details.
+
+```bash
+client-tui connect <server_address> [<server_port>]
+```
+
+Additional parameters can be viewed using the command:
+
+```bash
+client-tui connect --help
+```
+
 ## License
 
 No license, complete freedom, you can do whatever you want with this project.

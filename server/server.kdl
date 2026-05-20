@@ -3,6 +3,6 @@
 //     server-key "server-key.pem"
 // }
 
-auth {
-    token "super-puper-secret-token-change-me"
-}
+// auth {
+//     token "super-puper-secret-token-change-me"
+// }
